@@ -23,8 +23,9 @@ export function PlanUploader({ projectId }: { projectId: string }) {
 
     try {
       const {
-        data: { user },
-      } = await supabase.auth.getUser()
+        data: { session },
+      } = await supabase.auth.getSession()
+      const user = session?.user
       if (!user) throw new Error('Session expirée, reconnectez-vous.')
 
       // Le premier segment du chemin doit être l'id utilisateur :
@@ -50,9 +51,14 @@ export function PlanUploader({ projectId }: { projectId: string }) {
       if (insertError) throw new Error(insertError.message)
 
       setStep('analyzing')
+      // Le jeton de session authentifie l'appel : le service IA vérifie
+      // qu'on est bien le propriétaire du document avant de l'analyser.
       const response = await fetch(`${AI_SERVICE_URL}/analyze`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
         body: JSON.stringify({ document_id: document.id }),
       })
       if (!response.ok) {

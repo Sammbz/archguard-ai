@@ -19,7 +19,7 @@ import os
 
 import fitz  # PyMuPDF
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI
 from pydantic import BaseModel
@@ -54,6 +54,24 @@ supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
 class AnalyzeRequest(BaseModel):
     document_id: str
+
+
+def authenticated_user_id(authorization: str | None) -> str:
+    """Valide le jeton Bearer envoyé par le front auprès de Supabase Auth.
+
+    Sans cette barrière, /analyze est ouvert à tous : la clé service_role
+    contournant le RLS, n'importe qui pourrait analyser les documents d'autrui
+    et brûler le budget du modèle. Le CORS ne protège pas (curl l'ignore)."""
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(401, "Jeton d'authentification manquant")
+    token = authorization.split(" ", 1)[1].strip()
+    try:
+        response = supabase.auth.get_user(token)
+    except Exception as exc:
+        raise HTTPException(401, "Jeton invalide") from exc
+    if not response or not response.user:
+        raise HTTPException(401, "Jeton invalide")
+    return response.user.id
 
 
 def pdf_to_png_pages(raw: bytes) -> list[bytes]:
@@ -152,10 +170,12 @@ def health():
 
 
 @app.post("/analyze")
-def analyze(req: AnalyzeRequest):
+def analyze(req: AnalyzeRequest, authorization: str | None = Header(default=None)):
+    user_id = authenticated_user_id(authorization)
+
     documents = (
         supabase.table("documents")
-        .select("id, storage_path, file_type")
+        .select("id, storage_path, file_type, projects(owner_id)")
         .eq("id", req.document_id)
         .execute()
         .data
@@ -163,6 +183,15 @@ def analyze(req: AnalyzeRequest):
     if not documents:
         raise HTTPException(404, "Document introuvable")
     document = documents[0]
+
+    # Le document doit appartenir à l'utilisateur authentifié. On revérifie
+    # l'appartenance ici parce que la clé service_role ignore le RLS.
+    project = document.get("projects")
+    if isinstance(project, list):
+        project = project[0] if project else None
+    owner_id = project.get("owner_id") if project else None
+    if owner_id != user_id:
+        raise HTTPException(403, "Accès refusé à ce document")
 
     analysis_id = (
         supabase.table("ai_analyses")
