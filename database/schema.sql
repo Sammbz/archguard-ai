@@ -158,3 +158,41 @@ create policy "own plans delete" on storage.objects
   for delete using (
     bucket_id = 'plans' and (storage.foldername(name))[1] = auth.uid()::text
   );
+
+-- =========================================================
+-- 5) FINDING_STATUS  — le suivi des constats (« manager »)
+-- Chaque constat d'une analyse peut être piloté dans le temps :
+-- ouvert -> corrigé -> vérifié (ou écarté). C'est ce qui transforme
+-- l'outil d'analyse en système de gestion de la conformité.
+-- Un constat est référencé par (analysis_id, index dans result.errors) ;
+-- les analyses étant immuables, cet index est stable.
+-- =========================================================
+create table if not exists public.finding_status (
+  id            uuid primary key default gen_random_uuid(),
+  analysis_id   uuid not null references public.ai_analyses(id) on delete cascade,
+  finding_index integer not null,
+  status        text not null default 'open',  -- open | fixed | verified | dismissed
+  note          text,
+  updated_by    uuid references public.profiles(id),
+  updated_at    timestamptz not null default now(),
+  unique (analysis_id, finding_index)
+);
+
+create index if not exists finding_status_analysis_idx
+  on public.finding_status(analysis_id);
+
+alter table public.finding_status enable row level security;
+
+-- On ne voit/modifie le statut d'un constat que si l'analyse porte sur un
+-- document d'un projet qu'on possède.
+drop policy if exists "finding status of own analyses" on public.finding_status;
+create policy "finding status of own analyses" on public.finding_status
+  for all using (
+    exists (
+      select 1
+      from public.ai_analyses a
+      join public.documents d on d.id = a.document_id
+      join public.projects  p on p.id = d.project_id
+      where a.id = finding_status.analysis_id and p.owner_id = auth.uid()
+    )
+  );

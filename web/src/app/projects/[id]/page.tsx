@@ -1,7 +1,14 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
-import type { AnalysisIssue, PlanDocument, Project } from '@/lib/types'
+import type {
+  AnalysisIssue,
+  FindingStatus,
+  FindingStatusValue,
+  PlanDocument,
+  Project,
+} from '@/lib/types'
+import { FindingControls } from './finding-controls'
 import { PlanUploader } from './plan-uploader'
 
 const SEVERITY_STYLES: Record<AnalysisIssue['severity'], string> = {
@@ -40,6 +47,22 @@ export default async function ProjectPage({
     .order('created_at', { ascending: false })
 
   const typedProject = project as Project
+  const typedDocuments = (documents as PlanDocument[] | null) ?? []
+
+  // Statuts des constats, indexés par "analysisId:findingIndex".
+  const statusMap = new Map<string, FindingStatusValue>()
+  const analysisIds = typedDocuments.flatMap((d) =>
+    (d.ai_analyses ?? []).map((a) => a.id)
+  )
+  if (analysisIds.length) {
+    const { data: statuses } = await supabase
+      .from('finding_status')
+      .select('*')
+      .in('analysis_id', analysisIds)
+    for (const s of (statuses as FindingStatus[] | null) ?? []) {
+      statusMap.set(`${s.analysis_id}:${s.finding_index}`, s.status)
+    }
+  }
 
   return (
     <main className="mx-auto w-full max-w-3xl flex-1 p-6">
@@ -61,7 +84,7 @@ export default async function ProjectPage({
       </div>
 
       <div className="mt-6 space-y-4">
-        {(documents as PlanDocument[] | null)?.map((document) => {
+        {typedDocuments.map((document) => {
           // Une analyse par téléversement, la plus récente d'abord.
           const analysis = [...(document.ai_analyses ?? [])].sort((a, b) =>
             b.created_at.localeCompare(a.created_at)
@@ -107,18 +130,26 @@ export default async function ProjectPage({
                       <p className="text-sm font-medium">Problèmes détectés</p>
                       <ul className="mt-2 space-y-2">
                         {analysis.result.errors.map((issue, index) => (
-                          <li key={index} className="flex gap-2 text-sm">
-                            <span
-                              className={`shrink-0 rounded px-1.5 py-0.5 text-xs font-medium ${
-                                SEVERITY_STYLES[issue.severity] ??
-                                SEVERITY_STYLES.low
-                              }`}
-                            >
-                              {issue.type}
-                            </span>
-                            <span className="text-slate-600">
-                              {issue.description}
-                            </span>
+                          <li key={index} className="text-sm">
+                            <div className="flex gap-2">
+                              <span
+                                className={`shrink-0 rounded px-1.5 py-0.5 text-xs font-medium ${
+                                  SEVERITY_STYLES[issue.severity] ??
+                                  SEVERITY_STYLES.low
+                                }`}
+                              >
+                                {issue.type}
+                              </span>
+                              <span className="text-slate-600">
+                                {issue.description}
+                              </span>
+                            </div>
+                            <FindingControls
+                              projectId={id}
+                              analysisId={analysis.id}
+                              findingIndex={index}
+                              current={statusMap.get(`${analysis.id}:${index}`)}
+                            />
                           </li>
                         ))}
                       </ul>

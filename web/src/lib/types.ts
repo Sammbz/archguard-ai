@@ -22,6 +22,17 @@ export type AnalysisResult = {
   suggestions?: string[]
 }
 
+export type FindingStatusValue = 'open' | 'fixed' | 'verified' | 'dismissed'
+
+export type FindingStatus = {
+  id: string
+  analysis_id: string
+  finding_index: number
+  status: FindingStatusValue
+  note: string | null
+  updated_at: string
+}
+
 export type AiAnalysis = {
   id: string
   document_id: string
