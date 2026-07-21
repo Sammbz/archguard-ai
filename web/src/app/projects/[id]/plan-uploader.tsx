@@ -77,12 +77,14 @@ export function PlanUploader({ projectId }: { projectId: string }) {
       <label className="flex cursor-pointer flex-col items-start gap-2">
         <span className="text-sm font-medium">Téléverser un plan</span>
         <span className="text-sm text-slate-500">
-          PDF, PNG ou JPG. L&apos;analyse démarre automatiquement et prend 10 à
-          30 secondes.
+          PDF, PNG, JPG ou DXF (AutoCAD). Le DXF est mesuré au réel ; les autres
+          formats sont analysés visuellement. Pour un fichier .dwg, exportez-le
+          d&apos;abord en .dxf. L&apos;analyse démarre automatiquement et prend
+          10 à 30 secondes.
         </span>
         <input
           type="file"
-          accept=".pdf,.png,.jpg,.jpeg"
+          accept=".pdf,.png,.jpg,.jpeg,.dxf"
           disabled={busy}
           onChange={handleFile}
           className="mt-1 text-sm file:mr-3 file:rounded-lg file:border-0 file:bg-slate-900 file:px-4 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-slate-800 disabled:opacity-50"
