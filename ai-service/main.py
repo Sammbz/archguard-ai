@@ -128,17 +128,54 @@ def run_vector(measurements_text: str) -> dict:
     return json.loads(response.choices[0].message.content)
 
 
+def convert_dwg_to_dxf(raw: bytes, converter_path: str) -> bytes:
+    """Convertit un .dwg en .dxf via ODA File Converter (moteur externe).
+
+    L'outil opère sur des dossiers : on écrit le .dwg dans un dossier temporaire,
+    on lance la conversion, on relit le .dxf produit."""
+    import pathlib
+    import subprocess
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as in_dir, tempfile.TemporaryDirectory() as out_dir:
+        (pathlib.Path(in_dir) / "plan.dwg").write_bytes(raw)
+        try:
+            # <input> <output> <version cible> <type> <récursif> <audit>
+            subprocess.run(
+                [converter_path, in_dir, out_dir, "ACAD2018", "DXF", "0", "1"],
+                check=True,
+                timeout=120,
+                capture_output=True,
+            )
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+            raise HTTPException(502, f"Conversion .dwg échouée : {exc}") from exc
+
+        produced = list(pathlib.Path(out_dir).glob("*.dxf"))
+        if not produced:
+            raise HTTPException(502, "Conversion .dwg -> .dxf : aucun fichier produit.")
+        return produced[0].read_bytes()
+
+
 def analyze_document(raw: bytes, file_type: str | None) -> dict:
     """Aiguille vers la voie vecteur (.dxf) ou image selon le format."""
     ft = (file_type or "").lower()
 
     if ft == "dwg":
-        # Le .dwg natif est binaire et propriétaire : pas de lecture directe.
-        raise HTTPException(
-            400,
-            "Format .dwg non lu directement. Exporte en .dxf (analyse vectorielle "
-            "précise) ou en PDF (analyse visuelle) depuis ton logiciel de CAO.",
-        )
+        # Le .dwg natif est binaire et propriétaire. La conversion en .dxf exige
+        # un moteur externe (ODA File Converter). Point d'intégration : si son
+        # chemin est fourni via DWG_TO_DXF_CONVERTER, on convertit puis on
+        # bascule en voie vectorielle ; sinon on demande un export manuel.
+        converter = os.getenv("DWG_TO_DXF_CONVERTER")
+        if converter:
+            raw = convert_dwg_to_dxf(raw, converter)
+            ft = "dxf"
+        else:
+            raise HTTPException(
+                400,
+                "Format .dwg non lu directement. Exporte en .dxf (analyse "
+                "vectorielle précise) ou en PDF (analyse visuelle) depuis ton "
+                "logiciel de CAO.",
+            )
 
     if ft == "dxf":
         # Import paresseux : la voie image ne doit pas dépendre de la lib CAO.

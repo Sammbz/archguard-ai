@@ -71,6 +71,33 @@ def _room_areas(msp, to_meter) -> list[float]:
     return sorted(areas)
 
 
+# Classification heuristique par mots-clés dans les noms de calques/blocs.
+# Première passe du « sens » des entités : imparfaite (les conventions varient
+# d'un cabinet à l'autre) mais déjà utile comme contexte. Le vrai chantier de
+# reconnaissance géométrique reste à faire.
+_CATEGORY_KEYWORDS = {
+    "murs": ("mur", "wall", "cloison"),
+    "portes": ("porte", "door", "prt"),
+    "fenetres": ("fenetre", "fenêtre", "window", "baie", "wind"),
+    "escaliers": ("escalier", "stair", "esc", "marche"),
+    "cotation": ("cotation", "cote", "dim", "anno-dim"),
+    "mobilier": ("mobilier", "meuble", "furn", "equip"),
+    "reseaux": ("elec", "plomb", "sanit", "hvac", "clim"),
+}
+
+
+def _classify(names: list[str]) -> dict[str, list[str]]:
+    """Range des noms (calques ou blocs) par catégorie selon des mots-clés."""
+    result: dict[str, list[str]] = {}
+    for name in names:
+        low = name.lower()
+        for category, keywords in _CATEGORY_KEYWORDS.items():
+            if any(k in low for k in keywords):
+                result.setdefault(category, []).append(name)
+                break
+    return result
+
+
 def _plain_text(entity) -> str:
     """Texte lisible d'un TEXT ou MTEXT, sans codes de formatage."""
     try:
@@ -138,6 +165,8 @@ def extract_measurements(raw: bytes) -> dict:
 
     layers = [layer.dxf.name for layer in doc.layers]
     room_areas = _room_areas(msp, to_meter)
+    # Sens probable des calques/blocs (heuristique par nom).
+    categories = _classify(layers + list(blocks.keys()))
 
     return {
         "unit": unit_label,
@@ -149,6 +178,7 @@ def extract_measurements(raw: bytes) -> dict:
         "blocks": blocks,
         "entity_counts": entity_counts,
         "layers": layers,
+        "categories": categories,
     }
 
 
@@ -178,6 +208,12 @@ def to_prompt_text(m: dict) -> str:
     if m["texts"]:
         joined = " | ".join(m["texts"][:120])
         lines.append(f"Textes du plan : {joined}")
+
+    if m.get("categories"):
+        cats = "; ".join(
+            f"{cat} ({', '.join(names[:8])})" for cat, names in m["categories"].items()
+        )
+        lines.append(f"Éléments identifiés (heuristique, à confirmer) : {cats}")
 
     if m["layers"]:
         lines.append(f"Calques : {', '.join(m['layers'][:60])}")
