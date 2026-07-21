@@ -25,6 +25,7 @@ from openai import OpenAI
 from pydantic import BaseModel
 from supabase import create_client
 
+import regulations
 from prompt import MODEL, SYSTEM_PROMPT, SYSTEM_PROMPT_VECTOR
 
 load_dotenv()
@@ -37,6 +38,11 @@ ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",
 # Un dossier de permis fait plusieurs feuilles, mais chaque page est un appel
 # vision payant : on borne pour garder le coût prévisible.
 MAX_PDF_PAGES = int(os.getenv("MAX_PDF_PAGES", "15"))
+
+# Pays dont on applique les règles réglementaires (FR, SN, RDC, GENERIC).
+# Pont temporaire : à terme, le pays viendra du projet (colonne à ajouter),
+# pas d'une variable globale.
+DEFAULT_COUNTRY = os.getenv("DEFAULT_COUNTRY", regulations.GENERIC)
 
 app = FastAPI(title="ArchGuard AI — service d'analyse")
 app.add_middleware(
@@ -190,7 +196,7 @@ def analyze_document(raw: bytes, file_type: str | None) -> dict:
         measurements = dxf_reader.extract_measurements(raw)
 
         # 1) Constats DÉTERMINISTES : calculés en dur, certains, chiffrés.
-        certain = rules.evaluate(measurements)
+        certain = rules.evaluate(measurements, DEFAULT_COUNTRY)
         # 2) Analyse IA par-dessus, pour le contexte et les axes non mesurables.
         result = run_vector(dxf_reader.to_prompt_text(measurements))
 
