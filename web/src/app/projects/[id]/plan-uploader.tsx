@@ -83,14 +83,14 @@ export function PlanUploader({ projectId }: { projectId: string }) {
       <label className="flex cursor-pointer flex-col items-start gap-2">
         <span className="text-sm font-medium">Téléverser un plan</span>
         <span className="text-sm text-slate-500">
-          PDF, PNG, JPG ou DXF (AutoCAD). Le DXF est mesuré au réel ; les autres
-          formats sont analysés visuellement. Pour un fichier .dwg, exportez-le
-          d&apos;abord en .dxf. L&apos;analyse démarre automatiquement et prend
-          10 à 30 secondes.
+          <strong>IFC</strong> (ArchiCAD, Revit) donne les résultats les plus
+          fiables : les pièces y sont lues, pas devinées. DXF accepté mais moins
+          précis ; PDF, PNG et JPG analysés visuellement. Pour un .dwg,
+          exportez-le d&apos;abord. L&apos;analyse prend 10 à 30 secondes.
         </span>
         <input
           type="file"
-          accept=".pdf,.png,.jpg,.jpeg,.dxf"
+          accept=".ifc,.dxf,.pdf,.png,.jpg,.jpeg"
           disabled={busy}
           onChange={handleFile}
           className="mt-1 text-sm file:mr-3 file:rounded-lg file:border-0 file:bg-slate-900 file:px-4 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-slate-800 disabled:opacity-50"

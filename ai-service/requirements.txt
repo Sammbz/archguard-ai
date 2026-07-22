@@ -6,3 +6,4 @@ pydantic==2.10.5
 python-dotenv==1.0.1
 PyMuPDF==1.25.2
 ezdxf==1.4.4
+ifcopenshell==0.8.5

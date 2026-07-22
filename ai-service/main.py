@@ -183,22 +183,29 @@ def analyze_document(raw: bytes, file_type: str | None) -> dict:
                 "logiciel de CAO.",
             )
 
-    if ft == "dxf":
-        # Import paresseux : la voie image ne doit pas dépendre de la lib CAO.
+    if ft in ("ifc", "dxf"):
+        # Import paresseux : la voie image ne doit pas dépendre des libs CAO/BIM.
         try:
-            import dxf_reader
             import rules
+
+            reader = None
+            if ft == "ifc":
+                import ifc_reader as reader
+            else:
+                import dxf_reader as reader
         except ImportError as exc:
             raise HTTPException(
-                503, "Lecture .dxf indisponible (dépendance ezdxf manquante)."
+                503,
+                f"Lecture .{ft} indisponible (dépendance manquante : "
+                f"{'ifcopenshell' if ft == 'ifc' else 'ezdxf'}).",
             ) from exc
 
-        measurements = dxf_reader.extract_measurements(raw)
+        measurements = reader.extract_measurements(raw)
 
         # 1) Constats DÉTERMINISTES : calculés en dur, certains, chiffrés.
         certain = rules.evaluate(measurements, DEFAULT_COUNTRY)
         # 2) Analyse IA par-dessus, pour le contexte et les axes non mesurables.
-        result = run_vector(dxf_reader.to_prompt_text(measurements))
+        result = run_vector(reader.to_prompt_text(measurements))
 
         # Les constats certains passent devant ceux estimés par le modèle.
         result["errors"] = certain + (result.get("errors") or [])

@@ -59,13 +59,37 @@ def evaluate(measurements: dict, country: str = regulations.GENERIC) -> list[dic
 
     for reg in regulations.for_country(country):
         if reg.kind == "min_room_area":
-            for area in measurements.get("room_areas_m2", []):
-                # Écarter ce qui ne peut pas être une pièce avant de comparer.
-                if not ROOM_PLAUSIBLE_MIN_M2 <= area <= ROOM_PLAUSIBLE_MAX_M2:
-                    continue
-                if area < reg.threshold:
+            rooms = measurements.get("rooms")
+            if rooms:
+                # Source IFC : la pièce est un objet du modèle, avec son nom et
+                # sa surface. Aucun garde-fou de plausibilité nécessaire — on ne
+                # devine plus, donc plus de faux positifs à filtrer.
+                for room in rooms:
+                    area = room.get("area_m2")
+                    if area is not None and area < reg.threshold:
+                        findings.append(
+                            _finding(reg, area, f"Pièce « {room['name']} » de {area} m²")
+                        )
+            else:
+                # Source DXF : « polyligne fermée = pièce » est une supposition.
+                for area in measurements.get("room_areas_m2", []):
+                    if not ROOM_PLAUSIBLE_MIN_M2 <= area <= ROOM_PLAUSIBLE_MAX_M2:
+                        continue
+                    if area < reg.threshold:
+                        findings.append(
+                            _finding(reg, area, f"Espace fermé de {area} m²")
+                        )
+
+        elif reg.kind == "min_ceiling_height":
+            # Activable seulement avec une source qui porte la hauteur (IFC) :
+            # un plan 2D n'en contient pas.
+            for room in measurements.get("rooms", []):
+                height = room.get("height_m")
+                if height is not None and height < reg.threshold:
                     findings.append(
-                        _finding(reg, area, f"Espace fermé de {area} m²")
+                        _finding(
+                            reg, height, f"Pièce « {room['name']} » : hauteur {height} m"
+                        )
                     )
 
         elif reg.kind == "min_dimension":
