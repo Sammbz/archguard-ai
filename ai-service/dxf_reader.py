@@ -12,11 +12,11 @@ Limites assumées de cette première version :
   et reste le gros chantier restant.
 """
 
-import io
+import os
+import tempfile
 
 import ezdxf
-from ezdxf import bbox
-from ezdxf.recover import read as recover_read
+import ezdxf.recover
 
 # Borne le volume envoyé au modèle : au-delà, le coût en tokens grimpe sans
 # gain d'analyse. On garde les premiers éléments rencontrés.
@@ -50,25 +50,45 @@ def _polygon_area(points) -> float:
     return abs(total) / 2.0
 
 
-def _room_areas(msp, to_meter) -> list[float]:
-    """Surfaces (m²) des polylignes fermées : la donnée que le mode image ne
-    peut jamais mesurer exactement. Sans unité connue, on ne convertit pas."""
-    if not to_meter:
-        return []
-    areas: list[float] = []
-    for poly in msp.query("LWPOLYLINE POLYLINE"):
+def _entity_area_m2(poly, to_meter) -> float | None:
+    """Surface (m²) d'une polyligne fermée, ou None si non applicable."""
+    try:
+        if not poly.is_closed:
+            return None
+        pts = (
+            [(p[0], p[1]) for p in poly.get_points()]
+            if poly.dxftype() == "LWPOLYLINE"
+            else [(v.dxf.location.x, v.dxf.location.y) for v in poly.vertices]
+        )
+    except Exception:
+        return None
+    # float() natif : ezdxf renvoie des np.float64, à éviter côté JSONB.
+    # 3 décimales : un arrondi trop grossier ferait passer 8,996 m² pour
+    # 9,0 m² et masquerait une non-conformité.
+    area = round(float(_polygon_area(pts)) * (to_meter ** 2), 3)
+    return area if area > 0 else None
+
+
+def _load(raw: bytes):
+    """Charge le document CAO.
+
+    Voie rapide (`readfile`) d'abord : le mode `recover`, qui audite et répare,
+    est plusieurs fois plus lent et ne sert que si le fichier est mal formé.
+    On passe par un fichier temporaire pour laisser ezdxf détecter l'encodage."""
+    handle, path = tempfile.mkstemp(suffix=".dxf")
+    try:
+        with os.fdopen(handle, "wb") as tmp:
+            tmp.write(raw)
         try:
-            if not poly.is_closed:
-                continue
-            pts = [(p[0], p[1]) for p in poly.get_points()] if poly.dxftype() == "LWPOLYLINE" \
-                else [(v.dxf.location.x, v.dxf.location.y) for v in poly.vertices]
+            return ezdxf.readfile(path)
         except Exception:
-            continue
-        # float() natif : ezdxf renvoie des np.float64, à éviter côté JSONB.
-        area_m2 = round(float(_polygon_area(pts)) * (to_meter ** 2), 2)
-        if area_m2 > 0:
-            areas.append(area_m2)
-    return sorted(areas)
+            doc, _auditor = ezdxf.recover.readfile(path)
+            return doc
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
 
 
 # Classification heuristique par mots-clés dans les noms de calques/blocs.
@@ -84,6 +104,23 @@ _CATEGORY_KEYWORDS = {
     "mobilier": ("mobilier", "meuble", "furn", "equip"),
     "reseaux": ("elec", "plomb", "sanit", "hvac", "clim"),
 }
+
+
+# Catégories de calques dont une polyligne fermée n'est jamais une pièce.
+# Sans ce filtre, les blocs de mobilier répétés produisent des dizaines de
+# fausses « pièces » de 1 à 2 m² sur un plan réel.
+_NON_ROOM_CATEGORIES = frozenset(
+    {"mobilier", "cotation", "reseaux", "portes", "fenetres", "escaliers"}
+)
+
+
+def _category_of(name: str) -> str | None:
+    """Catégorie devinée d'un nom de calque, ou None si inconnue."""
+    low = name.lower()
+    for category, keywords in _CATEGORY_KEYWORDS.items():
+        if any(k in low for k in keywords):
+            return category
+    return None
 
 
 def _classify(names: list[str]) -> dict[str, list[str]]:
@@ -110,61 +147,70 @@ def _plain_text(entity) -> str:
 
 def extract_measurements(raw: bytes) -> dict:
     """Extrait un résumé structuré des données mesurables d'un .dxf."""
-    # recover.read tolère les fichiers légèrement malformés, fréquents en vrai.
-    doc, _auditor = recover_read(io.BytesIO(raw))
+    doc = _load(raw)
     msp = doc.modelspace()
 
     unit_code = int(doc.header.get("$INSUNITS", 0) or 0)
     unit_label, to_meter = _UNITS.get(unit_code, ("inconnue", None))
 
-    # Emprise générale du dessin.
+    # Emprise : lue dans l'en-tête, où le DXF la stocke déjà. La recalculer
+    # entité par entité (ezdxf.bbox) coûte des minutes sur un gros fichier.
     extents = None
     try:
-        box = bbox.extents(msp)
-        if box.has_data:
-            size = box.size  # Vec3 en unités du dessin
-            extents = {"width": round(size.x, 3), "height": round(size.y, 3)}
+        emin, emax = doc.header.get("$EXTMIN"), doc.header.get("$EXTMAX")
+        if emin and emax:
+            extents = {
+                "width": round(abs(emax[0] - emin[0]), 3),
+                "height": round(abs(emax[1] - emin[1]), 3),
+            }
     except Exception:
         pass
 
-    # Cotes réellement portées sur le plan : la donnée la plus fiable.
-    dimensions = []
-    for dim in msp.query("DIMENSION"):
-        try:
-            value = dim.get_measurement()
-        except Exception:
-            continue
-        if isinstance(value, (int, float)):
-            dimensions.append(round(float(value), 3))
-        if len(dimensions) >= _MAX_ITEMS:
-            break
-
-    # Textes du plan : noms de pièces, surfaces annotées, notes.
-    texts = []
-    for txt in msp.query("TEXT MTEXT"):
-        content = _plain_text(txt)
-        if content:
-            texts.append(content)
-        if len(texts) >= _MAX_ITEMS:
-            break
-
-    # Blocs insérés : portes, fenêtres, sanitaires… comptés par nom.
+    # UNE seule passe sur le dessin : parcourir le modelspace cinq fois (une
+    # par type d'entité) est le principal coût sur les fichiers réels.
+    dimensions: list[float] = []
+    texts: list[str] = []
     blocks: dict[str, int] = {}
-    for ref in msp.query("INSERT"):
-        try:
-            name = ref.dxf.name
-        except Exception:
-            continue
-        blocks[name] = blocks.get(name, 0) + 1
-
-    # Comptage global par type d'entité — donne la « densité » du dessin.
     entity_counts: dict[str, int] = {}
-    for entity in msp:
-        t = entity.dxftype()
-        entity_counts[t] = entity_counts.get(t, 0) + 1
+    room_areas: list[float] = []
 
+    for entity in msp:
+        etype = entity.dxftype()
+        entity_counts[etype] = entity_counts.get(etype, 0) + 1
+
+        if etype == "DIMENSION":
+            if len(dimensions) < _MAX_ITEMS:
+                try:
+                    value = entity.get_measurement()
+                    if isinstance(value, (int, float)):
+                        dimensions.append(round(float(value), 3))
+                except Exception:
+                    pass
+        elif etype in ("TEXT", "MTEXT"):
+            if len(texts) < _MAX_ITEMS:
+                content = _plain_text(entity)
+                if content:
+                    texts.append(content)
+        elif etype == "INSERT":
+            try:
+                blocks[entity.dxf.name] = blocks.get(entity.dxf.name, 0) + 1
+            except Exception:
+                pass
+        elif etype in ("LWPOLYLINE", "POLYLINE") and to_meter:
+            # Un contour sur un calque de mobilier, de cotation ou de menuiserie
+            # n'est pas une pièce : on l'écarte avant même de calculer.
+            try:
+                layer_category = _category_of(entity.dxf.layer)
+            except Exception:
+                layer_category = None
+            if layer_category in _NON_ROOM_CATEGORIES:
+                continue
+            area = _entity_area_m2(entity, to_meter)
+            if area is not None:
+                room_areas.append(area)
+
+    room_areas.sort()
     layers = [layer.dxf.name for layer in doc.layers]
-    room_areas = _room_areas(msp, to_meter)
     # Sens probable des calques/blocs (heuristique par nom).
     categories = _classify(layers + list(blocks.keys()))
 
