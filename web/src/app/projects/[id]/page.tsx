@@ -9,6 +9,7 @@ import type {
   Project,
 } from '@/lib/types'
 import { FindingControls } from './finding-controls'
+import { FindingGauge } from './finding-gauge'
 import { PlanUploader } from './plan-uploader'
 
 const SEVERITY_STYLES: Record<AnalysisIssue['severity'], string> = {
@@ -144,6 +145,7 @@ export default async function ProjectPage({
                                 {issue.description}
                               </span>
                             </div>
+                            <FindingGauge issue={issue} />
                             <FindingControls
                               projectId={id}
                               analysisId={analysis.id}

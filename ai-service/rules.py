@@ -23,24 +23,34 @@ MAX_FINDINGS = 25
 _SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 
 
-def _describe(reg: regulations.Regulation, measured: float, subject: str) -> str:
-    """Formule le constat selon que la règle est validée (droit) ou non (repère)."""
+def _describe(
+    reg: regulations.Regulation, measured: float, subject: str, gap: float, unit: str
+) -> str:
+    """Formule le constat, avec l'écart chiffré pour le rendre actionnable."""
     base = (
-        f"{subject} : {measured} (mesuré) pour un minimum de "
-        f"{reg.threshold} — {reg.label}"
+        f"{subject} : {measured} {unit} mesurés pour un minimum de "
+        f"{reg.threshold} {unit} — {reg.label}"
     )
+    ecart = f" Écart : il manque {gap} {unit}."
     if reg.validated and reg.code_reference:
-        return f"{base}. Non conforme ({reg.code_reference})."
-    return f"{base}. Repère non réglementaire, à valider."
+        return f"{base}. Non conforme ({reg.code_reference}).{ecart}"
+    return f"{base}. Repère non réglementaire, à valider.{ecart}"
 
 
-def _finding(reg: regulations.Regulation, measured: float, subject: str) -> dict:
+def _finding(
+    reg: regulations.Regulation, measured: float, subject: str, unit: str
+) -> dict:
+    # Écart = ce qui manque pour atteindre le seuil. On ne conçoit pas la
+    # correction (choix d'architecte), on donne juste l'objectif chiffré.
+    gap = round(reg.threshold - measured, 3)
     return {
         "type": reg.axis,
         "severity": reg.severity,
-        "description": _describe(reg, measured, subject),
+        "description": _describe(reg, measured, subject, gap, unit),
         "measured": measured,
         "threshold": reg.threshold,
+        "gap": gap,
+        "unit": unit,
         "code_reference": reg.code_reference if reg.validated else None,
         "validated": reg.validated,
         "certain": True,  # la mesure est certaine, distincte de l'estimation IA
@@ -85,7 +95,7 @@ def evaluate(measurements: dict, country: str = regulations.GENERIC) -> list[dic
                     area = room.get("area_m2")
                     if area is not None and area < reg.threshold:
                         findings.append(
-                            _finding(reg, area, f"Pièce « {room['name']} » de {area} m²")
+                            _finding(reg, area, f"Pièce « {room['name']} »", "m²")
                         )
             else:
                 # Source DXF : « polyligne fermée = pièce » est une supposition.
@@ -93,9 +103,7 @@ def evaluate(measurements: dict, country: str = regulations.GENERIC) -> list[dic
                     if not ROOM_PLAUSIBLE_MIN_M2 <= area <= ROOM_PLAUSIBLE_MAX_M2:
                         continue
                     if area < reg.threshold:
-                        findings.append(
-                            _finding(reg, area, f"Espace fermé de {area} m²")
-                        )
+                        findings.append(_finding(reg, area, "Espace fermé", "m²"))
 
         elif reg.kind == "min_ceiling_height":
             # Activable seulement avec une source qui porte la hauteur (IFC) :
@@ -105,7 +113,7 @@ def evaluate(measurements: dict, country: str = regulations.GENERIC) -> list[dic
                 if height is not None and height < reg.threshold:
                     findings.append(
                         _finding(
-                            reg, height, f"Pièce « {room['name']} » : hauteur {height} m"
+                            reg, height, f"Pièce « {room['name']} » (hauteur)", "m"
                         )
                     )
 
@@ -118,7 +126,7 @@ def evaluate(measurements: dict, country: str = regulations.GENERIC) -> list[dic
                 dim_m = dim * factor
                 if 0 < dim_m < reg.threshold:
                     shown = round(dim_m, 3)
-                    findings.append(_finding(reg, shown, f"{subject} de {shown} m"))
+                    findings.append(_finding(reg, shown, subject, "m"))
 
     # Les plus graves d'abord, puis on borne : un rapport de 1700 lignes ne se
     # lit pas. Le nombre total reste disponible via le champ « truncated ».

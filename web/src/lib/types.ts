@@ -13,6 +13,14 @@ export type AnalysisIssue = {
   type: string
   severity: 'low' | 'medium' | 'high'
   description: string
+  // Champs des constats déterministes (source IFC/DXF). Absents pour les
+  // constats estimés par l'IA sur un PDF.
+  measured?: number | null
+  threshold?: number | null
+  gap?: number | null
+  unit?: string | null
+  validated?: boolean
+  code_reference?: string | null
 }
 
 export type AnalysisResult = {
