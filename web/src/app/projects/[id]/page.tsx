@@ -168,8 +168,9 @@ export default async function ProjectPage({
                   )}
 
                   <p className="text-xs text-slate-400">
-                    Analyse générée par IA — aide à la décision, ne vaut pas
-                    validation de conformité réglementaire.
+                    Aide à la décision — ne vaut pas une validation de conformité
+                    réglementaire. Les constats cités restent à confirmer par un
+                    professionnel selon le type de bâtiment.
                   </p>
                 </div>
               )}

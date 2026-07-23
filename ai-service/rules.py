@@ -47,6 +47,23 @@ def _finding(reg: regulations.Regulation, measured: float, subject: str) -> dict
     }
 
 
+def _dimension_values(measurements: dict, concern: str) -> list[float]:
+    """Cotes à confronter à une règle, selon la source.
+
+    En IFC, les mesures sont typées (largeur de porte vs de fenêtre) : on route
+    chaque règle vers son sujet, donc pas de double comptage — une largeur de
+    porte n'est pas testée comme une circulation. En DXF, on n'a que des cotes
+    anonymes : faute de savoir ce qu'elles représentent, toutes les règles
+    dimensionnelles s'y appliquent (d'où un possible double signalement, assumé)."""
+    if measurements.get("source") == "ifc":
+        typed = {
+            "largeur_porte": measurements.get("door_widths_m", []),
+            "largeur_circulation": measurements.get("circulation_widths_m", []),
+        }
+        return typed.get(concern, [])
+    return measurements.get("dimensions", [])
+
+
 def evaluate(measurements: dict, country: str = regulations.GENERIC) -> list[dict]:
     """Applique les règles du pays aux mesures extraites du .dxf.
 
@@ -93,14 +110,15 @@ def evaluate(measurements: dict, country: str = regulations.GENERIC) -> list[dic
                     )
 
         elif reg.kind == "min_dimension":
-            for dim in measurements.get("dimensions", []):
+            subject = "Porte" if reg.concern == "largeur_porte" else "Cote"
+            for dim in _dimension_values(measurements, reg.concern):
                 # On compare la valeur BRUTE : arrondir avant la comparaison
                 # ferait passer 0,899 m pour 0,90 m et masquerait la
                 # non-conformité. L'arrondi ne sert qu'à l'affichage.
                 dim_m = dim * factor
                 if 0 < dim_m < reg.threshold:
                     shown = round(dim_m, 3)
-                    findings.append(_finding(reg, shown, f"Cote de {shown} m"))
+                    findings.append(_finding(reg, shown, f"{subject} de {shown} m"))
 
     # Les plus graves d'abord, puis on borne : un rapport de 1700 lignes ne se
     # lit pas. Le nombre total reste disponible via le champ « truncated ».
