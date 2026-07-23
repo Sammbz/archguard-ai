@@ -28,6 +28,8 @@ export type AnalysisResult = {
   summary?: string
   errors?: AnalysisIssue[]
   suggestions?: string[]
+  // Carte de conformité (schéma SVG des pièces) générée par le service.
+  plan_svg?: string
 }
 
 export type FindingStatusValue = 'open' | 'fixed' | 'verified' | 'dismissed'

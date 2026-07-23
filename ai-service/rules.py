@@ -38,7 +38,11 @@ def _describe(
 
 
 def _finding(
-    reg: regulations.Regulation, measured: float, subject: str, unit: str
+    reg: regulations.Regulation,
+    measured: float,
+    subject: str,
+    unit: str,
+    target: str | None = None,
 ) -> dict:
     # Écart = ce qui manque pour atteindre le seuil. On ne conçoit pas la
     # correction (choix d'architecte), on donne juste l'objectif chiffré.
@@ -51,6 +55,7 @@ def _finding(
         "threshold": reg.threshold,
         "gap": gap,
         "unit": unit,
+        "target": target,  # nom de la pièce visée, pour la carte de conformité
         "code_reference": reg.code_reference if reg.validated else None,
         "validated": reg.validated,
         "certain": True,  # la mesure est certaine, distincte de l'estimation IA
@@ -95,7 +100,10 @@ def evaluate(measurements: dict, country: str = regulations.GENERIC) -> list[dic
                     area = room.get("area_m2")
                     if area is not None and area < reg.threshold:
                         findings.append(
-                            _finding(reg, area, f"Pièce « {room['name']} »", "m²")
+                            _finding(
+                                reg, area, f"Pièce « {room['name']} »", "m²",
+                                target=room["name"],
+                            )
                         )
             else:
                 # Source DXF : « polyligne fermée = pièce » est une supposition.
@@ -113,7 +121,8 @@ def evaluate(measurements: dict, country: str = regulations.GENERIC) -> list[dic
                 if height is not None and height < reg.threshold:
                     findings.append(
                         _finding(
-                            reg, height, f"Pièce « {room['name']} » (hauteur)", "m"
+                            reg, height, f"Pièce « {room['name']} » (hauteur)", "m",
+                            target=room["name"],
                         )
                     )
 

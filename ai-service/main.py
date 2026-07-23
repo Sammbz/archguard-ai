@@ -273,6 +273,17 @@ def analyze_document(raw: bytes, file_type: str | None) -> dict:
 
         # Les constats certains passent devant ceux estimés par le modèle.
         result["errors"] = certain + (result.get("errors") or [])
+
+        # Carte de conformité : schéma des pièces coloré selon les constats.
+        try:
+            import plan_svg
+
+            svg = plan_svg.build_svg(measurements.get("rooms") or [], certain)
+            if svg:
+                result["plan_svg"] = svg
+        except Exception:
+            pass  # la carte est un plus, jamais un motif d'échec d'analyse
+
         return result
 
     return run_vision(images_for_vision(raw, ft))

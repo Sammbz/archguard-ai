@@ -126,6 +126,21 @@ export default async function ProjectPage({
                     </p>
                   )}
 
+                  {analysis.result.plan_svg && (
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                      <p className="mb-2 text-sm font-medium">
+                        Carte de conformité
+                      </p>
+                      {/* SVG généré par notre service (textes échappés) :
+                          contenu maîtrisé, sans script. */}
+                      <div
+                        dangerouslySetInnerHTML={{
+                          __html: analysis.result.plan_svg,
+                        }}
+                      />
+                    </div>
+                  )}
+
                   {!!analysis.result.errors?.length && (
                     <div>
                       <p className="text-sm font-medium">Problèmes détectés</p>
