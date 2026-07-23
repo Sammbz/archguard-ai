@@ -134,6 +134,18 @@ def run_vector(measurements_text: str) -> dict:
     return json.loads(response.choices[0].message.content)
 
 
+# Pénalités par gravité pour un score dérivé des seuls constats déterministes,
+# quand la synthèse IA est indisponible. Grossier mais honnête : il ne couvre
+# que le dimensionnel mesuré.
+_SCORE_PENALTY = {"high": 15, "medium": 8, "low": 3}
+
+
+def _score_from_findings(findings: list[dict]) -> int:
+    """Score 0-100 dérivé des non-conformités mesurées (sans IA)."""
+    score = 100 - sum(_SCORE_PENALTY.get(f.get("severity"), 5) for f in findings)
+    return max(0, min(100, score))
+
+
 def convert_dwg_to_dxf(raw: bytes, converter_path: str) -> bytes:
     """Convertit un .dwg en .dxf via ODA File Converter (moteur externe).
 
@@ -162,9 +174,45 @@ def convert_dwg_to_dxf(raw: bytes, converter_path: str) -> bytes:
         return produced[0].read_bytes()
 
 
+def detect_format(raw: bytes) -> str | None:
+    """Reconnaît le vrai format par sa signature, pas par l'extension.
+
+    Un fichier peut être renommé (un .dwg appelé .pdf) : se fier à l'extension
+    mène à des erreurs cryptiques (« Failed to open stream »). On lit les
+    premiers octets, source de vérité."""
+    head = raw[:2048]
+    if head[:4] == b"%PDF":
+        return "pdf"
+    if head[:4] == b"AC10":  # AC1012..AC1032 : familles DWG AutoCAD
+        return "dwg"
+    if head[:8] == b"\x89PNG\r\n\x1a\n":
+        return "png"
+    if head[:3] == b"\xff\xd8\xff":
+        return "jpg"
+    if b"ISO-10303-21" in head:  # en-tête STEP, format des .ifc
+        return "ifc"
+    if head[:18] == b"AutoCAD Binary DXF":
+        return "dxf"
+    if b"SECTION" in head and (b"HEADER" in head or b"ENTITIES" in head):
+        return "dxf"  # DXF ASCII
+    return None
+
+
 def analyze_document(raw: bytes, file_type: str | None) -> dict:
-    """Aiguille vers la voie vecteur (.dxf) ou image selon le format."""
-    ft = (file_type or "").lower()
+    """Aiguille vers la voie vecteur (.dxf/.ifc) ou image selon le format réel."""
+    # Le format réel prime sur l'extension déclarée.
+    detected = detect_format(raw)
+    ft = detected or (file_type or "").lower()
+
+    if detected and file_type and detected != file_type.lower():
+        # Cas fréquent : un .dwg renommé .pdf. On le signale clairement plutôt
+        # que de laisser échouer le lecteur avec un message obscur.
+        if detected == "dwg":
+            raise HTTPException(
+                400,
+                "Ce fichier est en réalité un .dwg (AutoCAD), quelle que soit "
+                "son extension. Exporte-le en .ifc (recommandé) ou en .dxf.",
+            )
 
     if ft == "dwg":
         # Le .dwg natif est binaire et propriétaire. La conversion en .dxf exige
@@ -203,9 +251,25 @@ def analyze_document(raw: bytes, file_type: str | None) -> dict:
         measurements = reader.extract_measurements(raw)
 
         # 1) Constats DÉTERMINISTES : calculés en dur, certains, chiffrés.
+        #    C'est le cœur du produit : il ne doit PAS dépendre du LLM.
         certain = rules.evaluate(measurements, DEFAULT_COUNTRY)
-        # 2) Analyse IA par-dessus, pour le contexte et les axes non mesurables.
-        result = run_vector(reader.to_prompt_text(measurements))
+
+        # 2) Synthèse IA par-dessus, pour le contexte et les axes non mesurables.
+        #    Si le service de langage est injoignable (quota, panne), on dégrade
+        #    proprement : on rend quand même l'analyse déterministe.
+        try:
+            result = run_vector(reader.to_prompt_text(measurements))
+        except Exception as exc:
+            result = {
+                "score": _score_from_findings(certain),
+                "summary": (
+                    "Analyse dimensionnelle déterministe. Synthèse IA "
+                    "indisponible pour le moment."
+                ),
+                "suggestions": [],
+                "ai_unavailable": True,
+                "ai_error": str(exc)[:200],
+            }
 
         # Les constats certains passent devant ceux estimés par le modèle.
         result["errors"] = certain + (result.get("errors") or [])
