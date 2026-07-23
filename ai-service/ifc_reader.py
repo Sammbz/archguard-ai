@@ -40,6 +40,55 @@ def _quantity(element, keys) -> float | None:
     return None
 
 
+def _placement_xy(placement) -> tuple[float, float]:
+    """Translation (x, y) d'un IfcLocalPlacement, en cumulant les parents."""
+    x, y = 0.0, 0.0
+    seen = 0
+    while placement is not None and seen < 20:  # garde-fou anti-boucle
+        seen += 1
+        try:
+            loc = placement.RelativePlacement.Location.Coordinates
+            x += float(loc[0])
+            y += float(loc[1])
+        except Exception:
+            pass
+        placement = getattr(placement, "PlacementRelTo", None)
+    return x, y
+
+
+def _footprint(space) -> list[tuple[float, float]] | None:
+    """Emprise 2D (contour) d'une pièce, si sa géométrie est un profil extrudé.
+
+    Beaucoup d'IFC réels décrivent les pièces ainsi ; sinon (IFC de quantités,
+    géométrie complexe), on renvoie None et l'affichage retombe sur le schéma."""
+    try:
+        representation = space.Representation
+        if not representation:
+            return None
+        ox, oy = _placement_xy(space.ObjectPlacement)
+        for rep in representation.Representations:
+            for item in rep.Items:
+                if not item.is_a("IfcExtrudedAreaSolid"):
+                    continue
+                profile = item.SweptArea
+                if not profile.is_a("IfcArbitraryClosedProfileDef"):
+                    continue
+                curve = profile.OuterCurve
+                if not curve.is_a("IfcPolyline"):
+                    continue
+                pts = [
+                    (float(p.Coordinates[0]) + ox, float(p.Coordinates[1]) + oy)
+                    for p in curve.Points
+                ]
+                # Retirer le point de fermeture s'il duplique le premier.
+                if len(pts) > 2 and pts[0] == pts[-1]:
+                    pts = pts[:-1]
+                return pts if len(pts) >= 3 else None
+    except Exception:
+        return None
+    return None
+
+
 def _space_label(space) -> str:
     """Nom lisible d'une pièce : LongName est souvent le libellé métier."""
     for attr in ("LongName", "Name"):
@@ -81,11 +130,18 @@ def extract_measurements(raw: bytes) -> dict:
         if area_m2 <= 0:
             continue
         height = _quantity(space, _HEIGHT_KEYS)
+        footprint = _footprint(space)
         rooms.append(
             {
                 "name": _space_label(space),
                 "area_m2": area_m2,
                 "height_m": round(height * to_meter, 3) if height else None,
+                # Emprise réelle (m) si le modèle porte sa géométrie, sinon None.
+                "footprint": (
+                    [[round(x * to_meter, 3), round(y * to_meter, 3)] for x, y in footprint]
+                    if footprint
+                    else None
+                ),
             }
         )
         room_areas.append(area_m2)
